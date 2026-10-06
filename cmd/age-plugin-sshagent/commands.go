@@ -90,9 +90,9 @@ func cmdList(args []string) int {
 		return 0
 	}
 	for _, k := range keys {
-		eligible := "not eligible (only ssh-ed25519 is supported)"
-		if k.Type() == ssh.KeyAlgoED25519 {
-			eligible = "eligible"
+		eligible := "eligible"
+		if err := derive.Eligible(k); err != nil {
+			eligible = "not eligible: " + err.Error()
 		}
 		fmt.Printf("%s %s %s [%s]\n", k.Type(), ssh.FingerprintSHA256(k), k.Comment, eligible)
 	}

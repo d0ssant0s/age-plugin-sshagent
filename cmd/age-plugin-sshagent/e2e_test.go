@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"filippo.io/age/plugin"
+	"golang.org/x/crypto/ssh"
 
 	"github.com/eszio/age-plugin-sshagent/internal/agenttest"
 	"github.com/eszio/age-plugin-sshagent/internal/derive"
@@ -37,7 +38,10 @@ func TestAgeCLIEndToEnd(t *testing.T) {
 	kr, key := agenttest.New(t, "e2e@test")
 	sock := agenttest.Serve(t, kr)
 
-	d, _ := derive.NewIdentity(key)
+	d, err := derive.NewIdentity(key, ssh.KeyAlgoED25519)
+	if err != nil {
+		t.Fatal(err)
+	}
 	id, err := derive.X25519(kr, key, d)
 	if err != nil {
 		t.Fatal(err)

@@ -8,22 +8,51 @@ import (
 	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
-	"crypto/rsa"
+	"crypto/sha256"
 	"io"
 	"testing"
 
 	"filippo.io/age"
+	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
 	"github.com/eszio/age-plugin-sshagent/internal/agenttest"
 )
 
-func TestDeriveDeterministic(t *testing.T) {
-	kr, key := agenttest.New(t, "a@b")
-	d, err := NewIdentity(key)
+func newEd25519Identity(t *testing.T, key ssh.PublicKey) *Identity {
+	t.Helper()
+	d, err := NewIdentity(key, ssh.KeyAlgoED25519)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return d
+}
+
+// TestEd25519GoldenVector pins the ssh-ed25519 derivation to the value the
+// pre-RSA code produced, so existing identities keep decrypting.
+func TestEd25519GoldenVector(t *testing.T) {
+	seed := make([]byte, ed25519.SeedSize)
+	for i := range seed {
+		seed[i] = byte(i)
+	}
+	kr, key := agenttest.WithKey(t, ed25519.NewKeyFromSeed(seed), "golden")
+	d := &Identity{fingerprint: sha256.Sum256(key.Marshal()), format: ssh.KeyAlgoED25519}
+	for i := range d.salt {
+		d.salt[i] = byte(i)
+	}
+	id, err := X25519(kr, key, d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = "age1r75y2td0u4p0m44nvg735h3eqhwz96tvr3cd9xw68kshpu46jpcsaa9jgk"
+	if got := id.Recipient().String(); got != want {
+		t.Errorf("recipient = %s, want %s", got, want)
+	}
+}
+
+func TestDeriveDeterministic(t *testing.T) {
+	kr, key := agenttest.New(t, "a@b")
+	d := newEd25519Identity(t, key)
 	id1, err := X25519(kr, key, d)
 	if err != nil {
 		t.Fatal(err)
@@ -42,8 +71,8 @@ func TestDeriveDeterministic(t *testing.T) {
 
 func TestSaltSeparatesIdentities(t *testing.T) {
 	kr, key := agenttest.New(t, "a@b")
-	d1, _ := NewIdentity(key)
-	d2, _ := NewIdentity(key)
+	d1 := newEd25519Identity(t, key)
+	d2 := newEd25519Identity(t, key)
 	id1, err := X25519(kr, key, d1)
 	if err != nil {
 		t.Fatal(err)
@@ -59,7 +88,7 @@ func TestSaltSeparatesIdentities(t *testing.T) {
 
 func TestEncryptDecryptRoundtrip(t *testing.T) {
 	kr, key := agenttest.New(t, "a@b")
-	d, _ := NewIdentity(key)
+	d := newEd25519Identity(t, key)
 	id, err := X25519(kr, key, d)
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +127,7 @@ func TestEncryptDecryptRoundtrip(t *testing.T) {
 
 func TestPayloadRoundtrip(t *testing.T) {
 	_, key := agenttest.New(t, "a@b")
-	d, _ := NewIdentity(key)
+	d := newEd25519Identity(t, key)
 	parsed, err := ParseIdentity(d.Encode())
 	if err != nil {
 		t.Fatal(err)
@@ -113,30 +142,11 @@ func TestPayloadRejectsBadInput(t *testing.T) {
 		t.Error("short payload accepted")
 	}
 	_, key := agenttest.New(t, "a@b")
-	d, _ := NewIdentity(key)
+	d := newEd25519Identity(t, key)
 	enc := d.Encode()
 	enc[0] = 0x7f
 	if _, err := ParseIdentity(enc); err == nil {
 		t.Error("unknown version accepted")
-	}
-}
-
-func TestRejectNonEd25519(t *testing.T) {
-	rsaKey, err := rsa.GenerateKey(rand.Reader, 2048)
-	if err != nil {
-		t.Fatal(err)
-	}
-	kr := agent.NewKeyring()
-	if err := kr.Add(agent.AddedKey{PrivateKey: rsaKey, Comment: "rsa@b"}); err != nil {
-		t.Fatal(err)
-	}
-	keys, _ := kr.List()
-	d, _ := NewIdentity(keys[0])
-	if _, err := X25519(kr, keys[0], d); err == nil {
-		t.Error("rsa key accepted for derivation")
-	}
-	if _, err := PickKey(kr, ""); err == nil {
-		t.Error("agent with only an rsa key produced an eligible pick")
 	}
 }
 
@@ -164,7 +174,7 @@ func TestDeriveFromPayloadViaSocket(t *testing.T) {
 	kr, key := agenttest.New(t, "sock@test")
 	agenttest.Serve(t, kr)
 
-	d, _ := NewIdentity(key)
+	d := newEd25519Identity(t, key)
 	id, err := FromPayload(d.Encode())
 	if err != nil {
 		t.Fatal(err)
@@ -183,7 +193,7 @@ func TestDeriveFromPayloadKeyNotLoaded(t *testing.T) {
 	agenttest.Serve(t, kr)
 
 	_, other := agenttest.New(t, "other@test")
-	d, _ := NewIdentity(other)
+	d := newEd25519Identity(t, other)
 	if _, err := FromPayload(d.Encode()); err == nil {
 		t.Error("missing agent key must fail")
 	}

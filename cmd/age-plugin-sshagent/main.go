@@ -59,7 +59,8 @@ func main() {
 func usage() {
 	fmt.Fprint(os.Stderr, `Usage:
   age-plugin-sshagent keygen [-k SELECTOR] [-o FILE]
-      Derive an identity from an ssh-ed25519 key in your ssh-agent.
+      Derive an identity from an ssh-ed25519 or ssh-rsa (>= 2048 bits) key in
+      your ssh-agent.
       Prints the identity (safe to store anywhere — it contains no secrets)
       and the age1... public key to encrypt to.
 
