@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package main
+package derive
 
 import (
 	"errors"
@@ -13,10 +13,10 @@ import (
 	"golang.org/x/crypto/ssh/agent"
 )
 
-// connectAgent connects to the ssh agent at SSH_AUTH_SOCK. Managing the agent
+// Connect connects to the ssh agent at SSH_AUTH_SOCK. Managing the agent
 // lifecycle (starting it, loading keys) is deliberately the user's job, the
 // same contract as ssh itself.
-func connectAgent() (agent.ExtendedAgent, error) {
+func Connect() (agent.ExtendedAgent, error) {
 	sock := os.Getenv("SSH_AUTH_SOCK")
 	if sock == "" {
 		return nil, errors.New("SSH_AUTH_SOCK is not set: start your ssh-agent and load your key")

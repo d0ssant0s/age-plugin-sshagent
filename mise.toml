@@ -1,0 +1,4 @@
+[tools]
+go = "1.27.1"
+# The end-to-end test runs the age CLI.
+"github:FiloSottile/age" = "1.3.2"

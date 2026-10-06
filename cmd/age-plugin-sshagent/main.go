@@ -17,6 +17,8 @@ import (
 
 	"filippo.io/age"
 	"filippo.io/age/plugin"
+
+	"github.com/eszio/age-plugin-sshagent/internal/derive"
 )
 
 func main() {
@@ -37,15 +39,15 @@ func main() {
 		os.Exit(2)
 	}
 
-	p, err := plugin.New(pluginName)
+	p, err := plugin.New(derive.PluginName)
 	if err != nil {
 		os.Exit(fatalf("%v", err))
 	}
 	p.HandleIdentity(func(data []byte) (age.Identity, error) {
-		return deriveFromPayload(data)
+		return derive.FromPayload(data)
 	})
 	p.HandleIdentityAsRecipient(func(data []byte) (age.Recipient, error) {
-		id, err := deriveFromPayload(data)
+		id, err := derive.FromPayload(data)
 		if err != nil {
 			return nil, err
 		}

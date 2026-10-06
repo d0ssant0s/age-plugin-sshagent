@@ -13,6 +13,9 @@ import (
 	"testing"
 
 	"filippo.io/age/plugin"
+
+	"github.com/eszio/age-plugin-sshagent/internal/agenttest"
+	"github.com/eszio/age-plugin-sshagent/internal/derive"
 )
 
 // TestAgeCLIEndToEnd drives the real age binary: encrypt with stock age to the
@@ -31,17 +34,17 @@ func TestAgeCLIEndToEnd(t *testing.T) {
 		t.Fatalf("go build: %v\n%s", err, out)
 	}
 
-	kr, key := newTestAgent(t, "e2e@test")
-	sock := serveAgent(t, kr)
+	kr, key := agenttest.New(t, "e2e@test")
+	sock := agenttest.Serve(t, kr)
 
-	d, _ := newIdentityData(key)
-	id, err := deriveX25519(kr, key, d)
+	d, _ := derive.NewIdentity(key)
+	id, err := derive.X25519(kr, key, d)
 	if err != nil {
 		t.Fatal(err)
 	}
 	recipient := id.Recipient().String()
 	identityFile := filepath.Join(dir, "identity.txt")
-	contents := "# public key: " + recipient + "\n" + plugin.EncodeIdentity(pluginName, d.encode()) + "\n"
+	contents := "# public key: " + recipient + "\n" + plugin.EncodeIdentity(derive.PluginName, d.Encode()) + "\n"
 	if err := os.WriteFile(identityFile, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
 	}

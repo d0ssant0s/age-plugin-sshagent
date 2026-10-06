@@ -2,7 +2,9 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package main
+// Package derive re-derives X25519 age identities from deterministic
+// ssh-agent signatures, so the ssh private key never leaves the agent.
+package derive
 
 import (
 	"crypto/hkdf"
@@ -20,7 +22,8 @@ import (
 )
 
 const (
-	pluginName = "sshagent"
+	// PluginName is the age plugin name: identities read AGE-PLUGIN-SSHAGENT-1...
+	PluginName = "sshagent"
 
 	// payloadVersion is the first byte of the identity payload. Bump it for
 	// any change to the payload layout or the derivation scheme.
@@ -33,24 +36,26 @@ const (
 	hkdfContext      = "age-plugin-sshagent/v1/x25519"
 )
 
-// identityData is the public payload encoded in an AGE-PLUGIN-SSHAGENT-1...
+// Identity is the public payload encoded in an AGE-PLUGIN-SSHAGENT-1...
 // string. It contains no secret material: only a reference to which agent key
 // to use (a SHA-256 fingerprint) and a per-identity random salt. The actual
 // decryption key is re-derived on demand from the agent's signature.
-type identityData struct {
+type Identity struct {
 	fingerprint [fingerprintSize]byte // SHA-256 of the ssh public key wire format
 	salt        [saltSize]byte
 }
 
-func newIdentityData(key ssh.PublicKey) (*identityData, error) {
-	d := &identityData{fingerprint: sha256.Sum256(key.Marshal())}
+// NewIdentity returns an Identity for key with a fresh random salt.
+func NewIdentity(key ssh.PublicKey) (*Identity, error) {
+	d := &Identity{fingerprint: sha256.Sum256(key.Marshal())}
 	if _, err := rand.Read(d.salt[:]); err != nil {
 		return nil, err
 	}
 	return d, nil
 }
 
-func (d *identityData) encode() []byte {
+// Encode returns the payload for plugin.EncodeIdentity.
+func (d *Identity) Encode() []byte {
 	out := make([]byte, 0, 1+fingerprintSize+saltSize)
 	out = append(out, payloadVersion)
 	out = append(out, d.fingerprint[:]...)
@@ -58,14 +63,15 @@ func (d *identityData) encode() []byte {
 	return out
 }
 
-func parseIdentityData(data []byte) (*identityData, error) {
+// ParseIdentity parses a payload produced by Encode.
+func ParseIdentity(data []byte) (*Identity, error) {
 	if len(data) != 1+fingerprintSize+saltSize {
 		return nil, fmt.Errorf("malformed identity payload: unexpected length %d", len(data))
 	}
 	if data[0] != payloadVersion {
 		return nil, fmt.Errorf("unsupported identity version %d (this binary supports version %d)", data[0], payloadVersion)
 	}
-	d := &identityData{}
+	d := &Identity{}
 	copy(d.fingerprint[:], data[1:1+fingerprintSize])
 	copy(d.salt[:], data[1+fingerprintSize:])
 	return d, nil
@@ -75,7 +81,7 @@ func parseIdentityData(data []byte) (*identityData, error) {
 // context string and bound to the identity's salt, so the signature (and the
 // key derived from it) can't be obtained by tricking the user into signing
 // something else, and two identities over the same ssh key are independent.
-func (d *identityData) challenge() []byte {
+func (d *Identity) challenge() []byte {
 	c := make([]byte, 0, len(challengeContext)+1+saltSize)
 	c = append(c, challengeContext...)
 	c = append(c, 0x00)
@@ -83,13 +89,13 @@ func (d *identityData) challenge() []byte {
 	return c
 }
 
-// deriveX25519 asks the agent to sign the identity's challenge with the
+// X25519 asks the agent to sign the identity's challenge with the
 // referenced key and derives an X25519 age identity from the signature.
 // The ssh private key never leaves the agent. The derivation is repeatable
 // because Ed25519 signatures are deterministic (RFC 8032); only ssh-ed25519
 // keys are accepted for that reason (sk-* keys mix in a counter, RSA agents
 // may use randomized PSS padding).
-func deriveX25519(ag agent.Agent, key ssh.PublicKey, d *identityData) (*age.X25519Identity, error) {
+func X25519(ag agent.Agent, key ssh.PublicKey, d *Identity) (*age.X25519Identity, error) {
 	if key.Type() != ssh.KeyAlgoED25519 {
 		return nil, fmt.Errorf("unsupported ssh key type %q: only ssh-ed25519 keys produce deterministic signatures", key.Type())
 	}
@@ -115,9 +121,9 @@ func deriveX25519(ag agent.Agent, key ssh.PublicKey, d *identityData) (*age.X255
 	return age.ParseX25519Identity(strings.ToUpper(s))
 }
 
-// findAgentKey locates the ssh key referenced by the identity payload among
-// the keys currently loaded in the agent.
-func findAgentKey(ag agent.Agent, d *identityData) (ssh.PublicKey, error) {
+// FindKey locates the ssh key referenced by the identity among the keys
+// currently loaded in the agent.
+func FindKey(ag agent.Agent, d *Identity) (ssh.PublicKey, error) {
 	keys, err := ag.List()
 	if err != nil {
 		return nil, fmt.Errorf("cannot list ssh agent keys: %v", err)
@@ -135,20 +141,84 @@ func rawFingerprint(fp [fingerprintSize]byte) string {
 	return "SHA256:" + base64.RawStdEncoding.EncodeToString(fp[:])
 }
 
-// deriveFromPayload is the full decrypt-side path: parse the payload, find the
+// FromPayload is the full decrypt-side path: parse the payload, find the
 // key in the agent, and derive the X25519 identity.
-func deriveFromPayload(data []byte) (*age.X25519Identity, error) {
-	d, err := parseIdentityData(data)
+func FromPayload(data []byte) (*age.X25519Identity, error) {
+	d, err := ParseIdentity(data)
 	if err != nil {
 		return nil, err
 	}
-	ag, err := connectAgent()
+	ag, err := Connect()
 	if err != nil {
 		return nil, err
 	}
-	key, err := findAgentKey(ag, d)
+	key, err := FindKey(ag, d)
 	if err != nil {
 		return nil, err
 	}
-	return deriveX25519(ag, key, d)
+	return X25519(ag, key, d)
+}
+
+// Keygen creates an Identity for key and derives it twice, catching agents
+// that don't sign deterministically before anything is encrypted to a
+// recipient that could never be decrypted again.
+func Keygen(ag agent.Agent, key ssh.PublicKey) (*Identity, *age.X25519Identity, error) {
+	d, err := NewIdentity(key)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generating salt: %v", err)
+	}
+	id1, err := X25519(ag, key, d)
+	if err != nil {
+		return nil, nil, err
+	}
+	id2, err := X25519(ag, key, d)
+	if err != nil {
+		return nil, nil, err
+	}
+	if id1.String() != id2.String() {
+		return nil, nil, fmt.Errorf("agent produced non-deterministic signatures for %s; this key cannot be used", ssh.FingerprintSHA256(key))
+	}
+	return d, id1, nil
+}
+
+// PickKey selects an ssh-ed25519 key from the agent. With an empty selector
+// the agent must hold exactly one eligible key; otherwise the selector is
+// matched as a substring of the key's comment or SHA256 fingerprint.
+func PickKey(ag agent.Agent, selector string) (ssh.PublicKey, error) {
+	keys, err := ag.List()
+	if err != nil {
+		return nil, fmt.Errorf("cannot list ssh agent keys: %v", err)
+	}
+	if len(keys) == 0 {
+		return nil, fmt.Errorf("the ssh agent holds no keys: add one with ssh-add")
+	}
+
+	var eligible []*agent.Key
+	for _, k := range keys {
+		if k.Type() != ssh.KeyAlgoED25519 {
+			continue
+		}
+		if selector != "" &&
+			!strings.Contains(k.Comment, selector) &&
+			!strings.Contains(ssh.FingerprintSHA256(k), selector) {
+			continue
+		}
+		eligible = append(eligible, k)
+	}
+
+	switch len(eligible) {
+	case 1:
+		return eligible[0], nil
+	case 0:
+		if selector != "" {
+			return nil, fmt.Errorf("no ssh-ed25519 agent key matches %q (run 'age-plugin-sshagent list')", selector)
+		}
+		return nil, fmt.Errorf("the ssh agent holds no ssh-ed25519 keys (other key types are not supported; run 'age-plugin-sshagent list')")
+	default:
+		var lines []string
+		for _, k := range eligible {
+			lines = append(lines, fmt.Sprintf("  %s %s", ssh.FingerprintSHA256(k), k.Comment))
+		}
+		return nil, fmt.Errorf("multiple ssh-ed25519 keys match; pick one with -k:\n%s", strings.Join(lines, "\n"))
+	}
 }

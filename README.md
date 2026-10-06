@@ -26,7 +26,7 @@ The signature is verified against the public key before use. During `keygen`, th
 ## Install
 
 ```
-go install github.com/eszio/age-plugin-sshagent@latest
+go install github.com/eszio/age-plugin-sshagent/cmd/age-plugin-sshagent@latest
 ```
 
 The binary must be on your `PATH` so that `age` can discover it as a plugin. Requires age v1.1.0 or later to decrypt.

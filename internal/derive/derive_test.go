@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-package main
+package derive
 
 import (
 	"bytes"
@@ -10,44 +10,25 @@ import (
 	"crypto/rand"
 	"crypto/rsa"
 	"io"
-	"net"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"filippo.io/age"
-	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+
+	"github.com/eszio/age-plugin-sshagent/internal/agenttest"
 )
 
-func newTestAgent(t *testing.T, comment string) (agent.Agent, ssh.PublicKey) {
-	t.Helper()
-	_, priv, err := ed25519.GenerateKey(rand.Reader)
-	if err != nil {
-		t.Fatal(err)
-	}
-	kr := agent.NewKeyring()
-	if err := kr.Add(agent.AddedKey{PrivateKey: priv, Comment: comment}); err != nil {
-		t.Fatal(err)
-	}
-	keys, err := kr.List()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return kr, keys[0]
-}
-
 func TestDeriveDeterministic(t *testing.T) {
-	kr, key := newTestAgent(t, "a@b")
-	d, err := newIdentityData(key)
+	kr, key := agenttest.New(t, "a@b")
+	d, err := NewIdentity(key)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id1, err := deriveX25519(kr, key, d)
+	id1, err := X25519(kr, key, d)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id2, err := deriveX25519(kr, key, d)
+	id2, err := X25519(kr, key, d)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,14 +41,14 @@ func TestDeriveDeterministic(t *testing.T) {
 }
 
 func TestSaltSeparatesIdentities(t *testing.T) {
-	kr, key := newTestAgent(t, "a@b")
-	d1, _ := newIdentityData(key)
-	d2, _ := newIdentityData(key)
-	id1, err := deriveX25519(kr, key, d1)
+	kr, key := agenttest.New(t, "a@b")
+	d1, _ := NewIdentity(key)
+	d2, _ := NewIdentity(key)
+	id1, err := X25519(kr, key, d1)
 	if err != nil {
 		t.Fatal(err)
 	}
-	id2, err := deriveX25519(kr, key, d2)
+	id2, err := X25519(kr, key, d2)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,9 +58,9 @@ func TestSaltSeparatesIdentities(t *testing.T) {
 }
 
 func TestEncryptDecryptRoundtrip(t *testing.T) {
-	kr, key := newTestAgent(t, "a@b")
-	d, _ := newIdentityData(key)
-	id, err := deriveX25519(kr, key, d)
+	kr, key := agenttest.New(t, "a@b")
+	d, _ := NewIdentity(key)
+	id, err := X25519(kr, key, d)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +79,7 @@ func TestEncryptDecryptRoundtrip(t *testing.T) {
 	}
 
 	// Re-derive from scratch, as a fresh process would.
-	id2, err := deriveX25519(kr, key, d)
+	id2, err := X25519(kr, key, d)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -116,9 +97,9 @@ func TestEncryptDecryptRoundtrip(t *testing.T) {
 }
 
 func TestPayloadRoundtrip(t *testing.T) {
-	_, key := newTestAgent(t, "a@b")
-	d, _ := newIdentityData(key)
-	parsed, err := parseIdentityData(d.encode())
+	_, key := agenttest.New(t, "a@b")
+	d, _ := NewIdentity(key)
+	parsed, err := ParseIdentity(d.Encode())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,14 +109,14 @@ func TestPayloadRoundtrip(t *testing.T) {
 }
 
 func TestPayloadRejectsBadInput(t *testing.T) {
-	if _, err := parseIdentityData([]byte{0x01, 0x02}); err == nil {
+	if _, err := ParseIdentity([]byte{0x01, 0x02}); err == nil {
 		t.Error("short payload accepted")
 	}
-	_, key := newTestAgent(t, "a@b")
-	d, _ := newIdentityData(key)
-	enc := d.encode()
+	_, key := agenttest.New(t, "a@b")
+	d, _ := NewIdentity(key)
+	enc := d.Encode()
 	enc[0] = 0x7f
-	if _, err := parseIdentityData(enc); err == nil {
+	if _, err := ParseIdentity(enc); err == nil {
 		t.Error("unknown version accepted")
 	}
 }
@@ -150,11 +131,11 @@ func TestRejectNonEd25519(t *testing.T) {
 		t.Fatal(err)
 	}
 	keys, _ := kr.List()
-	d, _ := newIdentityData(keys[0])
-	if _, err := deriveX25519(kr, keys[0], d); err == nil {
+	d, _ := NewIdentity(keys[0])
+	if _, err := X25519(kr, keys[0], d); err == nil {
 		t.Error("rsa key accepted for derivation")
 	}
-	if _, err := pickKey(kr, ""); err == nil {
+	if _, err := PickKey(kr, ""); err == nil {
 		t.Error("agent with only an rsa key produced an eligible pick")
 	}
 }
@@ -166,10 +147,10 @@ func TestPickKeySelector(t *testing.T) {
 	kr.Add(agent.AddedKey{PrivateKey: priv1, Comment: "work@laptop"})
 	kr.Add(agent.AddedKey{PrivateKey: priv2, Comment: "personal@laptop"})
 
-	if _, err := pickKey(kr, ""); err == nil {
+	if _, err := PickKey(kr, ""); err == nil {
 		t.Error("ambiguous pick with two eligible keys must fail")
 	}
-	key, err := pickKey(kr, "work")
+	key, err := PickKey(kr, "work")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,45 +160,16 @@ func TestPickKeySelector(t *testing.T) {
 	}
 }
 
-// serveAgent exposes an agent on a unix socket and points SSH_AUTH_SOCK at it.
-func serveAgent(t *testing.T, kr agent.Agent) string {
-	t.Helper()
-	// macOS caps unix socket paths at 104 bytes (sun_path); avoid t.TempDir()
-	// which embeds the long test name. Use a short base dir + short filename.
-	dir, err := os.MkdirTemp("", "ap")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { os.RemoveAll(dir) })
-	sock := filepath.Join(dir, "s")
-	l, err := net.Listen("unix", sock)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { l.Close() })
-	go func() {
-		for {
-			conn, err := l.Accept()
-			if err != nil {
-				return
-			}
-			go agent.ServeAgent(kr, conn)
-		}
-	}()
-	t.Setenv("SSH_AUTH_SOCK", sock)
-	return sock
-}
-
 func TestDeriveFromPayloadViaSocket(t *testing.T) {
-	kr, key := newTestAgent(t, "sock@test")
-	serveAgent(t, kr)
+	kr, key := agenttest.New(t, "sock@test")
+	agenttest.Serve(t, kr)
 
-	d, _ := newIdentityData(key)
-	id, err := deriveFromPayload(d.encode())
+	d, _ := NewIdentity(key)
+	id, err := FromPayload(d.Encode())
 	if err != nil {
 		t.Fatal(err)
 	}
-	direct, err := deriveX25519(kr, key, d)
+	direct, err := X25519(kr, key, d)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -227,12 +179,12 @@ func TestDeriveFromPayloadViaSocket(t *testing.T) {
 }
 
 func TestDeriveFromPayloadKeyNotLoaded(t *testing.T) {
-	kr, _ := newTestAgent(t, "sock@test")
-	serveAgent(t, kr)
+	kr, _ := agenttest.New(t, "sock@test")
+	agenttest.Serve(t, kr)
 
-	_, other := newTestAgent(t, "other@test")
-	d, _ := newIdentityData(other)
-	if _, err := deriveFromPayload(d.encode()); err == nil {
+	_, other := agenttest.New(t, "other@test")
+	d, _ := NewIdentity(other)
+	if _, err := FromPayload(d.Encode()); err == nil {
 		t.Error("missing agent key must fail")
 	}
 }

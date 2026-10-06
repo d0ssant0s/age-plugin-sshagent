@@ -16,6 +16,8 @@ import (
 	"filippo.io/age/plugin"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
+
+	"github.com/eszio/age-plugin-sshagent/internal/derive"
 )
 
 func cmdKeygen(args []string) int {
@@ -24,37 +26,21 @@ func cmdKeygen(args []string) int {
 	out := fs.String("o", "", "write the identity to `FILE` (default stdout)")
 	fs.Parse(args)
 
-	ag, err := connectAgent()
+	ag, err := derive.Connect()
 	if err != nil {
 		return fatalf("%v", err)
 	}
-	key, err := pickKey(ag, *keySel)
+	key, err := derive.PickKey(ag, *keySel)
+	if err != nil {
+		return fatalf("%v", err)
+	}
+	d, id, err := derive.Keygen(ag, key)
 	if err != nil {
 		return fatalf("%v", err)
 	}
 
-	d, err := newIdentityData(key)
-	if err != nil {
-		return fatalf("generating salt: %v", err)
-	}
-
-	// Derive twice and compare: catches agents that don't produce
-	// deterministic signatures before the user encrypts anything to a
-	// recipient they could never decrypt for again.
-	id1, err := deriveX25519(ag, key, d)
-	if err != nil {
-		return fatalf("%v", err)
-	}
-	id2, err := deriveX25519(ag, key, d)
-	if err != nil {
-		return fatalf("%v", err)
-	}
-	if id1.String() != id2.String() {
-		return fatalf("agent produced non-deterministic signatures for %s; this key cannot be used", ssh.FingerprintSHA256(key))
-	}
-
-	recipient := id1.Recipient().String()
-	identity := plugin.EncodeIdentity(pluginName, d.encode())
+	recipient := id.Recipient().String()
+	identity := plugin.EncodeIdentity(derive.PluginName, d.Encode())
 
 	w := io.Writer(os.Stdout)
 	if *out != "" {
@@ -71,48 +57,6 @@ func cmdKeygen(args []string) int {
 	fmt.Fprintf(w, "%s\n", identity)
 	fmt.Fprintf(os.Stderr, "Public key: %s\n", recipient)
 	return 0
-}
-
-// pickKey selects an ssh-ed25519 key from the agent. With an empty selector
-// the agent must hold exactly one eligible key; otherwise the selector is
-// matched as a substring of the key's comment or SHA256 fingerprint.
-func pickKey(ag agent.Agent, selector string) (ssh.PublicKey, error) {
-	keys, err := ag.List()
-	if err != nil {
-		return nil, fmt.Errorf("cannot list ssh agent keys: %v", err)
-	}
-	if len(keys) == 0 {
-		return nil, fmt.Errorf("the ssh agent holds no keys: add one with ssh-add")
-	}
-
-	var eligible []*agent.Key
-	for _, k := range keys {
-		if k.Type() != ssh.KeyAlgoED25519 {
-			continue
-		}
-		if selector != "" &&
-			!strings.Contains(k.Comment, selector) &&
-			!strings.Contains(ssh.FingerprintSHA256(k), selector) {
-			continue
-		}
-		eligible = append(eligible, k)
-	}
-
-	switch len(eligible) {
-	case 1:
-		return eligible[0], nil
-	case 0:
-		if selector != "" {
-			return nil, fmt.Errorf("no ssh-ed25519 agent key matches %q (run 'age-plugin-sshagent list')", selector)
-		}
-		return nil, fmt.Errorf("the ssh agent holds no ssh-ed25519 keys (other key types are not supported; run 'age-plugin-sshagent list')")
-	default:
-		var lines []string
-		for _, k := range eligible {
-			lines = append(lines, fmt.Sprintf("  %s %s", ssh.FingerprintSHA256(k), k.Comment))
-		}
-		return nil, fmt.Errorf("multiple ssh-ed25519 keys match; pick one with -k:\n%s", strings.Join(lines, "\n"))
-	}
 }
 
 func keyComment(ag agent.Agent, key ssh.PublicKey) string {
@@ -133,7 +77,7 @@ func cmdList(args []string) int {
 	fs := flag.NewFlagSet("list", flag.ExitOnError)
 	fs.Parse(args)
 
-	ag, err := connectAgent()
+	ag, err := derive.Connect()
 	if err != nil {
 		return fatalf("%v", err)
 	}
@@ -181,10 +125,10 @@ func cmdRecipient(args []string) int {
 			continue
 		}
 		name, data, err := plugin.ParseIdentity(line)
-		if err != nil || name != pluginName {
+		if err != nil || name != derive.PluginName {
 			continue
 		}
-		id, err := deriveFromPayload(data)
+		id, err := derive.FromPayload(data)
 		if err != nil {
 			return fatalf("%v", err)
 		}
