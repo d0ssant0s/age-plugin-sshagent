@@ -2,9 +2,14 @@
 
 [README](../README.md) | [Getting started](getting-started.md) | [age-plugin-sshagent](age-plugin-sshagent.md) | [sshagent-cred](sshagent-cred.md)
 
-Read this before you trust either tool with anything. Remember that this fork
-is a proof of concept and that AI agents wrote its changes. No one has
-reviewed it.
+Read this before you trust either tool with anything. This fork is a proof of
+concept, and AI agents wrote its changes. Different agents and models have
+read the code. This checkout can name one pass: Grok 4.7 in GitHub Copilot,
+on 2026-10-08. Other passes are not listed, because this environment has no
+record of them. None of that is a human review, and none of it clears an
+open finding. Whether each finding was implemented, accepted, or rejected
+is tracked in
+[docs/reviews/2026-10-08-security.md](reviews/2026-10-08-security.md).
 
 ## How the key is derived
 
@@ -38,8 +43,10 @@ cryptography". That's fair.
 - Copying the private key, if the key lives in a TPM or smart card. The
   attacker needs the agent to sign, so the decryption key can't leave your
   machine without a signature leaving with it.
-- Plaintext secrets in config files and shell history, if programs get
-  Credentials through `sshagent-cred exec` or `token`.
+- Plaintext secrets in config files and shell history, if you pass a
+  Credential with `exec` and do not put the secret on a command line.
+  `token` still writes the value to stdout. A variable the shell already
+  set can hide the Credential.
 
 ## Who can decrypt
 
@@ -74,9 +81,32 @@ So:
   script that calls them.
 - Reading a secret from a process's environment after `exec` hands it over.
 - Offline guessing of a weak export password, using `export-check.age` or an
-  export file.
+  export file. The password does not stop `token` or `exec`. Those commands
+  need no password.
 - Metadata. Credential names, file sizes and modification times are in clear
   text.
+- A store you copied, synced, or pulled. `encrypt` trusts `recipient.txt`
+  and does not ask the agent. Compare a fresh recipient before you encrypt
+  into a store you did not just create:
+  `age-plugin-sshagent recipient -i identity.txt`.
+- A shell variable that is already set. `exec` appends `NAME=value` and, on
+  Linux and on macOS, the first value wins. The program then runs with the
+  old value and no error. Unset the name first.
+- A short `-k` match, and whatever agent `SSH_AUTH_SOCK` points at when you
+  run `keygen` or `init`. A unique substring is used even when it is the
+  wrong key. Read the full fingerprint before you encrypt to the new
+  recipient.
+- `age -e -i identity.txt`. That asks the agent to sign, same as decryption.
+  `age -e -r age1...` does not run the plugin.
+- Whatever binary named `age-plugin-sshagent` is first on `PATH`. It receives
+  the identity stanza and can ask the agent to sign while it runs as you.
+- A parent of the process. The password prompt is real against stdin and
+  the environment. It is not real against a parent that can trace the child.
+  On the machine where this was reviewed, Yama `ptrace_scope` was 1, which
+  allows that. A wrapper earlier on `PATH` is enough too.
+- The agent confirmation prompt, if you only look at the text. The challenge
+  starts with `age-plugin-sshagent/v1/derive` every time. The prompt does not
+  name the file or the Credential. It still stops a silent signature.
 
 ## Pros and cons compared with other options
 
@@ -113,7 +143,17 @@ an error is better than a silent mismatch.
 
 ## Known gaps in this proof of concept
 
-- No security review of the code or the scheme.
+- The 2026-10-08 review is an AI read of the tree, not a human review, and
+  not a proof of the signature-to-key construction. Open code items are
+  still open: `exec` does not replace an existing variable, `encrypt` trusts
+  `recipient.txt`, a NUL is accepted as text, and `import` does not roll
+  back. The error string says characters. The check is 12 bytes. `init`
+  does not tighten a store directory that already exists.
+- `keygen` checks that two signatures match. Decrypt does not repeat that
+  check. A later mismatch fails decryption. It does not return someone
+  else's plaintext.
+- Passwords, HKDF output, and Credential bytes are not wiped. Do not treat
+  a best-effort zeroing patch as a fix.
 - The tests cover behavior with in-memory agents and one manual probe of a
   Windows CAPI RSA key through Pageant. Other agents, such as gpg-agent,
   YubiKey PIV and macOS Keychain, are untested.

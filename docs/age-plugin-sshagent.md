@@ -3,8 +3,9 @@
 [README](../README.md) | [Getting started](getting-started.md) | [sshagent-cred](sshagent-cred.md) | [Security](security.md)
 
 `age-plugin-sshagent` is an age plugin. You run it yourself to create an
-identity. After that, `age` runs it when it needs to decrypt. Encrypting
-never needs it.
+identity. After that, `age` runs it when it needs to decrypt, and when you
+encrypt with `-i`. Encrypting with `-r` and an `age1...` recipient does not
+run the plugin.
 
 ## Commands
 
@@ -56,9 +57,17 @@ It doesn't sign anything.
 ## Encrypting and decrypting
 
 ```sh
-age -e -r age1... file > file.age        # stock age, no plugin needed
+age -e -r age1... file > file.age        # stock age, no plugin, no signature
 age -d -i identity.txt file.age          # age runs the plugin from PATH
 ```
+
+`age -e -i identity.txt` also runs the plugin. It derives the private key to
+recover the recipient, which is the same capability as decryption. Use `-r`
+unless you mean to ask the agent to sign.
+
+`age` runs whatever binary named `age-plugin-sshagent` is first on `PATH`.
+That binary receives the identity stanza. Install the one you built in a
+directory you control, and do not put `.` on `PATH`.
 
 One identity file can hold several identities. age tries each.
 

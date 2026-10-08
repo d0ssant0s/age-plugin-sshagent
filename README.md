@@ -2,9 +2,12 @@
 
 > **Status: proof of concept.** This fork is an experiment. Its changes to the
 > upstream code, and all of this documentation, were written by AI coding
-> agents under the maintainer's direction. The tests pass, but no one has
-> reviewed the cryptography or the code for security. Don't protect anything
-> with it that you can't afford to lose or to have read by others.
+> agents under the maintainer's direction. Different agents and models have
+> read the code. That is not a human review, and it does not clear the open
+> findings in
+> [the 2026-10-08 security review](docs/reviews/2026-10-08-security.md).
+> Don't protect anything with it that you can't afford to lose or to have
+> read by others.
 
 This repository holds two command-line tools that turn a key in your
 ssh-agent into an [age](https://age-encryption.org) decryption key:
@@ -90,7 +93,7 @@ Keep a token for a script:
 ```sh
 sshagent-cred init                             # asks for an export password
 printf %s "$TOKEN" | sshagent-cred encrypt example/token
-sshagent-cred exec -e TOKEN=example/token -- ./my-script.sh
+env -u TOKEN sshagent-cred exec -e TOKEN=example/token -- ./my-script.sh
 ```
 
 [docs/getting-started.md](docs/getting-started.md) walks through both
@@ -106,6 +109,9 @@ step by step.
   secrets to programs, and export and import.
 - [Security model and limitations](docs/security.md): how the key is
   derived, who can decrypt, and what this doesn't protect against.
+- [Security review, 2026-10-08](docs/reviews/2026-10-08-security.md):
+  open findings, and whether each one was implemented, accepted, or
+  rejected.
 - [Development](docs/development.md): code layout, tests and how the fork
   was built.
 - [Decisions](docs/adr/): why the fork works the way it does.

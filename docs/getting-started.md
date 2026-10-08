@@ -29,8 +29,10 @@ mise exec -- go build -o ~/.local/bin/ ./cmd/...
 ```
 
 This builds `age-plugin-sshagent` and `sshagent-cred`. The plugin must be on
-your `PATH`, because `age` finds plugins by name there. Don't use
-`go install github.com/eszio/...`, which installs the upstream version.
+your `PATH`, because `age` finds plugins by name there. Install it in a
+directory you control. Do not put `.` on `PATH`. A different binary with
+that name receives the identity stanza and can ask the agent to sign. Don't
+use `go install github.com/eszio/...`, which installs the upstream version.
 
 ## 3. Pick a key
 
@@ -44,9 +46,12 @@ ssh-rsa SHA256:EL5f... CAPI:b966... [eligible]
 ```
 
 With more than one eligible key, select one with `-k` and a substring of its
-comment or fingerprint, such as `-k CAPI`. Prefer a key that can't be
-exported, such as one held in a TPM or smart card, and one you don't forward
-to hosts you don't trust. [Security](security.md#who-can-decrypt) explains why.
+comment or fingerprint, such as `-k CAPI`. A short unique match is used, even
+when it is the wrong key. Read the full fingerprint `keygen` prints before
+you encrypt anything to the new recipient. `keygen` and `init` use whatever
+agent `SSH_AUTH_SOCK` points at. Prefer a key that can't be exported, such
+as one held in a TPM or smart card, and one you don't forward to hosts you
+don't trust. [Security](security.md#who-can-decrypt) explains why.
 
 ## 4. Encrypt and decrypt a file
 
@@ -61,8 +66,9 @@ For an RSA key it tries `rsa-sha2-512` first. It prints the public key:
 Public key: age1zeknf3xpp7mj4rr2vv4eph4dvn7g0xeuthwkr4msv5nvf8k63ctqdsxn20
 ```
 
-Anyone can encrypt to that key with stock age. Decrypting needs the identity
-file and the agent:
+Anyone can encrypt to that key with stock age and `-r`. Decrypting needs the
+identity file and the agent. `age -e -i identity.txt` also runs the plugin
+and asks the agent to sign. Use `-r` and the printed public key instead.
 
 ```sh
 age -e -r age1zeknf3... notes.txt > notes.txt.age
@@ -84,11 +90,14 @@ import the store, never to read a Credential. Write it down somewhere safe.
 ```sh
 printf %s 'my-api-token' | sshagent-cred encrypt example/token
 sshagent-cred list
-sshagent-cred exec -e TOKEN=example/token -- sh -c 'test -n "$TOKEN" && echo token set'
+env -u TOKEN sshagent-cred exec -e TOKEN=example/token -- sh -c 'test -n "$TOKEN" && echo token set'
 ```
 
-Pass Credentials to programs with `exec` or `token`, and avoid printing them
-in a terminal you share with others or with an AI agent.
+Do not put the secret in the command line. `printf` from a shell variable,
+or a pipe, keeps it out of the process list. Pass Credentials to programs
+with `exec`, and unset the name first. `token` writes the raw value to
+stdout. Avoid printing a Credential in a terminal you share with others or
+with an AI agent.
 
 ## 6. Make a backup
 

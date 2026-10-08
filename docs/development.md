@@ -7,9 +7,14 @@
 The fork started from upstream commit `8bc67c4` on 2026-10-06. AI coding agents
 wrote every change after that, from the restructure to RSA support,
 `sshagent-cred` and this documentation. They worked test-first, under the
-maintainer's direction, in one session. A person made the design decisions in
-[docs/adr/](adr/) and ran the RSA probe, but nobody did a line-by-line
-security review. Read the code with that in mind.
+maintainer's direction. A person made the design decisions in
+[docs/adr/](adr/) and ran the RSA probe. Different agents and models have
+since read the code. This checkout can name one pass, Grok 4.7 in GitHub
+Copilot on 2026-10-08. Other passes are not listed. That is not a human
+review. Open findings, and whether each one was implemented, accepted, or
+rejected, are in
+[docs/reviews/2026-10-08-security.md](reviews/2026-10-08-security.md).
+Read the code with that in mind.
 
 ## Layout
 

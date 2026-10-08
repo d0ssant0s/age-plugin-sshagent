@@ -20,7 +20,10 @@ stock `age -d` and the password are enough. An agent that doesn't know the
 password can't produce an export, but anyone who can read `export-check.age`
 can try to guess the password offline, so a weak password undoes this. Scripts
 can't export, because the password comes from `/dev/tty` only. There is no way
-yet to change the password.
+yet to change the password. The password does not stop `token` or `exec`.
+A process that can run `sshagent-cred` can print every Credential without it.
+The 2026-10-08 review records that as accepted, not as a bug to close with
+another prompt.
 
 Considered options: a new password at each export (an agent could pick its own
 and read the result); a second recovery identity encrypted with a password
